@@ -42,6 +42,7 @@ public class ThirdPersonCamera : MonoBehaviour
 
     [Header("Smoothing")]
     [SerializeField] private float followSmoothTime = 0.04f;
+    [SerializeField] private float recoilSnapSpeed = 25f;      // how fast recoil kick is applied
 
     public float Yaw => yaw;
     public float Pitch => pitch;
@@ -54,6 +55,7 @@ public class ThirdPersonCamera : MonoBehaviour
     private Vector3 pivotPos, pivotVelocity;
     private float crouchT, aimT;
     private bool aiming;
+    private float pendingPitch, pendingYaw;
 
     private void Awake()
     {
@@ -71,6 +73,13 @@ public class ThirdPersonCamera : MonoBehaviour
 
     public void SetAiming(bool value) => aiming = value;
 
+    /// <summary>Camera kick in degrees (pitchUp = look up, yawDelta = left/right). Applied smoothly.</summary>
+    public void AddRecoil(float pitchUp, float yawDelta)
+    {
+        pendingPitch += pitchUp;
+        pendingYaw += yawDelta;
+    }
+
     private void LateUpdate()
     {
         float dt = Time.deltaTime;
@@ -82,6 +91,17 @@ public class ThirdPersonCamera : MonoBehaviour
             yaw += look.x * sensitivity;
             pitch = Mathf.Clamp(pitch - look.y * sensitivity, minPitch, maxPitch);
             desiredDistance = Mathf.Clamp(desiredDistance - input.ConsumePinch() * pinchSpeed, minDistance, maxDistance);
+        }
+
+        if (pendingPitch != 0f || pendingYaw != 0f)
+        {
+            float k = 1f - Mathf.Exp(-recoilSnapSpeed * dt);   // frame-rate independent smoothing
+            float p = pendingPitch * k;
+            float y = pendingYaw * k;
+            pendingPitch -= p;
+            pendingYaw -= y;
+            pitch = Mathf.Clamp(pitch - p, minPitch, maxPitch);
+            yaw += y;
         }
 
         if (character) crouchT = Mathf.MoveTowards(crouchT, character.IsCrouching ? 1f : 0f, dt * 4f);
