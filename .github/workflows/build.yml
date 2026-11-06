@@ -21,17 +21,11 @@ jobs:
           restore-keys: |
             Library-
 
-      - name: Request Activation File
-        id: requestActivationFile
-        uses: game-ci/unity-request-activation@v2
-        env:
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-
       - name: Build Android APK
         uses: game-ci/unity-builder@v2
         env:
-          UNITY_LICENSE: ${{ steps.requestActivationFile.outputs.licenseFile }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           targetPlatform: Android
           buildMethod: BuildScript.BuildAndroid
