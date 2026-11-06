@@ -21,13 +21,21 @@ jobs:
           restore-keys: |
             Library-
 
+      # 1. Yeh step automatic Unity activate kar dega
+      - name: Request Activation File
+        uses: game-ci/unity-request-activation@v2
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
       - name: Build Android APK
         uses: game-ci/unity-builder@v2
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_LICENSE: ${{ steps.requestActivationFile.outputs.licenseFile }}
         with:
           targetPlatform: Android
           buildMethod: BuildScript.BuildAndroid
+          projectPath: .
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
