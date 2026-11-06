@@ -21,8 +21,8 @@ jobs:
           restore-keys: |
             Library-
 
-      # 1. Yeh step automatic Unity activate kar dega
       - name: Request Activation File
+        id: requestActivationFile
         uses: game-ci/unity-request-activation@v2
         env:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
