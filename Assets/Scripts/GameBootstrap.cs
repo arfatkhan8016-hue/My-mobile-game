@@ -19,10 +19,26 @@ public static class GameBootstrap
     private static Transform playerTf;
     private static GameObject[] enemyPrefabs;
 
+    private static bool hooked;
+    private static bool begun;
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
     {
+        if (!hooked)
+        {
+            hooked = true;
+            // "MENU" button reloads the scene -> show the lobby again
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += (scene, mode) => { begun = false; Begin(); };
+        }
+        Begin();
+    }
+
+    private static void Begin()
+    {
+        if (begun) return;
         if (Object.FindObjectOfType<TPSCharacterController>() != null) return;
+        begun = true;
 
         Screen.orientation = ScreenOrientation.LandscapeLeft;
         Screen.autorotateToPortrait = false;
@@ -31,12 +47,35 @@ public static class GameBootstrap
         Screen.autorotateToLandscapeRight = true;
 
         enemyPrefabs = Resources.LoadAll<GameObject>("Enemies");
+        Lobby.Show(StartGame);
+    }
 
+    private static void StartGame()
+    {
         BuildWorld();
         PlayerHealth health;
         WeaponSystem weapon = BuildPlayerAndWeapon(out health);
         BuildHud(weapon, health);
         SpawnEnemies(playerTf, health);
+    }
+
+    internal static void EnsureEventSystem()
+    {
+        if (Object.FindObjectOfType<EventSystem>() != null) return;
+        GameObject es = new GameObject("EventSystem", typeof(EventSystem));
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+        UnityEngine.InputSystem.UI.InputSystemUIInputModule module = es.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
+        module.AssignDefaultActions();
+#else
+        es.AddComponent<StandaloneInputModule>();
+#endif
+    }
+
+    internal static Font GetFont()
+    {
+        Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+        return font;
     }
 
     // ------------------------------------------------------------------ World
@@ -69,6 +108,8 @@ public static class GameBootstrap
             MakeBlock(new Vector3(-8f, 1f, 18f), new Vector3(1f, 2f, 10f), new Color(0.5f, 0.5f, 0.55f));
             MakeBlock(new Vector3(0f, 0.5f, 25f), new Vector3(12f, 1f, 1f), new Color(0.6f, 0.45f, 0.4f));
         }
+
+        BuildProps();
 
         if (enemyPrefabs.Length == 0)   // dummy targets only if no enemy models were uploaded
         {
@@ -109,7 +150,7 @@ public static class GameBootstrap
         camGO.SetActive(false);
         camGO.tag = "MainCamera";
         Camera cam = camGO.AddComponent<Camera>();
-        cam.farClipPlane = 300f;
+        cam.farClipPlane = 900f;
         camGO.AddComponent<AudioListener>();
         camGO.transform.position = new Vector3(0f, 3f, -6f);
         ThirdPersonCamera camRig = camGO.AddComponent<ThirdPersonCamera>();
@@ -195,6 +236,10 @@ public static class GameBootstrap
         health = player.AddComponent<PlayerHealth>();
         health.Init(tps, weapon);
 
+        // Shop upgrades bought with FB Coins
+        Set(weapon, "reserveAmmo", 150 + 60 * FBCoins.AmmoLevel);
+        health.Upgrade(25f * FBCoins.ArmorLevel);
+
         SetLayerRecursive(player, PlayerLayer);
 
         // Activate in order: player -> camera -> gun
@@ -252,14 +297,7 @@ public static class GameBootstrap
     // ------------------------------------------------------------------ HUD
     private static void BuildHud(WeaponSystem weapon, PlayerHealth health)
     {
-        // Event system
-        GameObject es = new GameObject("EventSystem", typeof(EventSystem));
-#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
-        UnityEngine.InputSystem.UI.InputSystemUIInputModule module = es.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
-        module.AssignDefaultActions();
-#else
-        es.AddComponent<StandaloneInputModule>();
-#endif
+        EnsureEventSystem();
 
         // Canvas
         GameObject canvasGO = new GameObject("HUD", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
@@ -323,6 +361,20 @@ public static class GameBootstrap
 
         health.Bind(flashImg, hbFill, deathText);
 
+        // FB Coins (top-center) and MENU button (top-right, under the ammo text)
+        RectTransform coinRt = UIRect("Coins", root, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -40f), new Vector2(700f, 70f));
+        Text coinText = coinRt.gameObject.AddComponent<Text>();
+        coinText.font = font;
+        coinText.fontSize = 46;
+        coinText.alignment = TextAnchor.MiddleCenter;
+        coinText.color = new Color(1f, 0.85f, 0.2f);
+        coinText.raycastTarget = false;
+        coinRt.gameObject.AddComponent<CoinLabel>();
+
+        Button menu = Lobby.RectButton(root, "MENU", new Vector2(1f, 1f), new Vector2(-150f, -160f), new Vector2(220f, 80f), new Color(0.2f, 0.2f, 0.25f, 0.8f), 34, font);
+        menu.onClick.AddListener(() =>
+            UnityEngine.SceneManagement.SceneManager.LoadScene(Mathf.Max(0, UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex)));
+
         // Buttons (bottom-right)
         Button fire = MakeButton("Fire", root, new Vector2(-230f, 240f), 230f, new Color(0.9f, 0.2f, 0.2f, 0.75f), circle, font, "FIRE");
         EventTrigger trig = fire.gameObject.AddComponent<EventTrigger>();
@@ -379,7 +431,7 @@ public static class GameBootstrap
         trigger.triggers.Add(e);
     }
 
-    private static RectTransform UIRect(string name, Transform parent, Vector2 aMin, Vector2 aMax, Vector2 pivot, Vector2 pos, Vector2 size)
+    internal static RectTransform UIRect(string name, Transform parent, Vector2 aMin, Vector2 aMax, Vector2 pivot, Vector2 pos, Vector2 size)
     {
         GameObject go = new GameObject(name, typeof(RectTransform));
         go.layer = 5;
@@ -393,7 +445,7 @@ public static class GameBootstrap
         return rt;
     }
 
-    private static Image UIImage(RectTransform rt, Sprite sprite, Color color, bool raycast)
+    internal static Image UIImage(RectTransform rt, Sprite sprite, Color color, bool raycast)
     {
         Image img = rt.gameObject.AddComponent<Image>();
         img.sprite = sprite;
@@ -403,7 +455,7 @@ public static class GameBootstrap
         return img;
     }
 
-    private static Sprite MakeCircle()
+    internal static Sprite MakeCircle()
     {
         const int size = 128;
         Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
@@ -483,11 +535,170 @@ public static class GameBootstrap
         go.transform.SetParent(parent, true);
     }
 
+    // ------------------------------------------------------------------ Props: trees, cars, clouds, sun
+    private static readonly Dictionary<string, Material> texMats = new Dictionary<string, Material>();
+    private static readonly string[] TreeNames = { "01", "02", "03", "04", "05", "06", "08", "11", "12", "13", "47", "48", "49", "52", "54", "55", "59", "60" };
+
+    private static void BuildProps()
+    {
+        System.Random rng = new System.Random(21);
+        Transform root = new GameObject("Props").transform;
+
+        // ---- Trees (one FBX holds ~200 single-mesh trees) ----
+        GameObject treesPrefab = Resources.Load<GameObject>("Trees/LowPoly_Tree_Collection_01_fbx");
+        if (treesPrefab != null)
+        {
+            GameObject master;
+            List<Transform> trees = ExtractChildren(treesPrefab, n => System.Array.IndexOf(TreeNames, n) >= 0, out master);
+            if (trees.Count == 0) trees = ExtractChildren(treesPrefab, n => true, out master);
+            if (trees.Count > 0)
+            {
+                for (int i = 0; i < 24; i++)   // along both sides of the avenue
+                {
+                    float side = (i % 2 == 0) ? -1f : 1f;
+                    float x = side * (15.2f + (float)rng.NextDouble() * 1.2f);
+                    float z = 24f + (i / 2) * 10f + (float)rng.NextDouble() * 3f;
+                    PlaceProp(trees[rng.Next(trees.Count)].gameObject, new Vector3(x, 0f, z), rng.Next(360), 6f + (float)rng.NextDouble() * 3f, true, false, false, root, "Trees/Trees_color");
+                }
+                for (int i = 0; i < 14; i++)   // around the spawn plaza
+                {
+                    float ang = (float)(rng.NextDouble() * Mathf.PI * 2.0);
+                    float rad = 14f + (float)rng.NextDouble() * 12f;
+                    Vector3 p = new Vector3(Mathf.Cos(ang) * rad, 0f, Mathf.Sin(ang) * rad - 4f);
+                    PlaceProp(trees[rng.Next(trees.Count)].gameObject, p, rng.Next(360), 6f + (float)rng.NextDouble() * 3f, true, false, false, root, "Trees/Trees_color");
+                }
+            }
+            if (master != null) Object.Destroy(master);
+        }
+
+        // ---- Parked vehicles (one FBX holds cars, trucks and tractors) ----
+        GameObject carsPrefab = Resources.Load<GameObject>("Cars/LowPoly_Cars_01_fbx");
+        if (carsPrefab != null)
+        {
+            GameObject master;
+            List<Transform> vehicles = ExtractChildren(carsPrefab, n => n.StartsWith("car_") || n.StartsWith("truck_") || n.StartsWith("tractor_"), out master);
+            if (vehicles.Count > 0)
+            {
+                for (int i = 0; i < 14; i++)
+                {
+                    Transform v = vehicles[rng.Next(vehicles.Count)];
+                    float len = v.name.StartsWith("truck_") ? 7.5f : (v.name.StartsWith("tractor_") ? 4.2f : 4.4f);
+                    float side = (i % 2 == 0) ? -1f : 1f;
+                    float x = side * (11.5f + (float)rng.NextDouble() * 2.5f);
+                    float z = 32f + i * 8f + (float)rng.NextDouble() * 3f;
+                    float yaw = rng.Next(2) * 180f + ((float)rng.NextDouble() - 0.5f) * 6f;
+                    PlaceProp(v.gameObject, new Vector3(x, 0f, z), yaw, len, false, true, true, root, "Cars/Cars_color");
+                }
+            }
+            if (master != null) Object.Destroy(master);
+        }
+
+        // ---- R8 sports car near the spawn ----
+        GameObject r8 = Resources.Load<GameObject>("Cars/r8");
+        if (r8 != null) PlaceProp(r8, new Vector3(9f, 0f, 10f), 25f, 4.5f, false, true, true, root, null);
+
+        // ---- Sky: clouds + sun (ignore-raycast layer so bullets pass through) ----
+        GameObject cloud = Resources.Load<GameObject>("Sky/cloud");
+        if (cloud != null)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                float x = ((float)rng.NextDouble() - 0.5f) * 300f;
+                float z = -40f + (float)rng.NextDouble() * 280f;
+                GameObject c = PlaceProp(cloud, new Vector3(x, 0f, z), rng.Next(360), 45f + (float)rng.NextDouble() * 35f, false, false, false, root, null);
+                c.transform.position += Vector3.up * (70f + (float)rng.NextDouble() * 40f);
+                SetLayerRecursive(c, 2);
+                foreach (Renderer r in c.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+        }
+
+        GameObject sunPrefab = Resources.Load<GameObject>("Sky/Sun");
+        if (sunPrefab != null)
+        {
+            Light dl = Object.FindObjectOfType<Light>();
+            Vector3 dir = dl != null ? -dl.transform.forward : new Vector3(-0.4f, 0.7f, -0.5f).normalized;
+            GameObject sun = PlaceProp(sunPrefab, Vector3.zero, 0f, 90f, false, false, false, root, null);
+            Bounds sb = GetBounds(sun);
+            sun.transform.position += dir * 600f - sb.center;
+            SetLayerRecursive(sun, 2);
+            foreach (Renderer r in sun.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
+    }
+
+    /// <summary>Clones a model from the Resources prefab and returns its direct children that pass the filter.</summary>
+    private static List<Transform> ExtractChildren(GameObject prefab, System.Predicate<string> filter, out GameObject master)
+    {
+        master = Object.Instantiate(prefab, new Vector3(3000f, 0f, 3000f), Quaternion.identity);
+        List<Transform> list = new List<Transform>();
+        foreach (Transform t in master.transform)
+            if (filter(t.name)) list.Add(t);
+        return list;
+    }
+
+    /// <summary>
+    /// Clones 'source', fits it to 'target' metres (length or height), puts its base on the ground at 'pos', turns it by yRot.
+    /// Camera/Light components that come with Blender exports are removed.
+    /// </summary>
+    private static GameObject PlaceProp(GameObject source, Vector3 pos, float yRot, float target, bool byHeight, bool alignZ, bool collider, Transform parent, string texPath)
+    {
+        GameObject go = Object.Instantiate(source);
+        foreach (Camera c in go.GetComponentsInChildren<Camera>(true)) Object.DestroyImmediate(c);
+        foreach (Light l in go.GetComponentsInChildren<Light>(true)) Object.DestroyImmediate(l);
+        foreach (AudioListener a in go.GetComponentsInChildren<AudioListener>(true)) Object.DestroyImmediate(a);
+        if (!string.IsNullOrEmpty(texPath)) ApplySharedTexture(go, texPath);
+
+        Bounds b = GetBounds(go);
+        if (alignZ && b.size.x > b.size.z)
+        {
+            go.transform.Rotate(0f, 90f, 0f, Space.World);
+            b = GetBounds(go);
+        }
+        float size = byHeight ? b.size.y : Mathf.Max(b.size.x, b.size.z);
+        if (size > 0.0001f) go.transform.localScale *= target / size;
+
+        b = GetBounds(go);
+        go.transform.position += pos - new Vector3(b.center.x, b.min.y, b.center.z);
+
+        if (collider)
+        {
+            Bounds fb = GetBounds(go);
+            BoxCollider box = go.AddComponent<BoxCollider>();
+            Vector3 ls = go.transform.lossyScale;
+            box.center = go.transform.InverseTransformPoint(fb.center);
+            box.size = new Vector3(fb.size.x / ls.x, fb.size.y / ls.y, fb.size.z / ls.z);
+        }
+
+        go.transform.RotateAround(pos, Vector3.up, yRot);
+        go.transform.SetParent(parent, true);
+        return go;
+    }
+
+    /// <summary>One shared material per texture (keeps draw calls low for props).</summary>
+    private static void ApplySharedTexture(GameObject go, string path)
+    {
+        Material m;
+        if (!texMats.TryGetValue(path, out m) || m == null)
+        {
+            Texture2D tex = Resources.Load<Texture2D>(path);
+            if (tex == null) return;
+            m = Mat(Color.white);
+            m.mainTexture = tex;
+            if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.15f);
+            texMats[path] = m;
+        }
+        foreach (Renderer r in go.GetComponentsInChildren<Renderer>())
+        {
+            Material[] arr = new Material[r.sharedMaterials.Length];
+            for (int i = 0; i < arr.Length; i++) arr[i] = m;
+            r.sharedMaterials = arr;
+        }
+    }
+
     /// <summary>
     /// Instantiates a Mixamo model under 'parent': scaled to 'height' metres, feet on the parent origin,
     /// turned to face +Z (detected from the hand bones) and textured from Resources (embedded FBX textures are unreliable).
     /// </summary>
-    private static GameObject AttachModel(GameObject prefab, Transform parent, float height, string texturePath)
+    internal static GameObject AttachModel(GameObject prefab, Transform parent, float height, string texturePath)
     {
         GameObject m = Object.Instantiate(prefab, new Vector3(1000f, 0f, 1000f), Quaternion.identity);
         foreach (Animator a in m.GetComponentsInChildren<Animator>()) Object.DestroyImmediate(a); // we animate by code
@@ -582,6 +793,7 @@ public static class GameBootstrap
             ai.playerHealth = health;
             ai.moveSpeed = speed;
             ai.spawnPoint = spots[i];
+            ai.coinReward = warrok ? 40 : (mutant ? 30 : 20);
 
             ProceduralCharacterAnimator anim = model.AddComponent<ProceduralCharacterAnimator>();
             anim.Init(e.transform, () => ai.CurrentSpeed, null, () => ai.AttackAnim, null);
@@ -671,7 +883,7 @@ public static class GameBootstrap
         }
     }
 
-    private static Bounds GetBounds(GameObject go)
+    internal static Bounds GetBounds(GameObject go)
     {
         Renderer[] rs = go.GetComponentsInChildren<Renderer>();
         if (rs.Length == 0) return new Bounds(go.transform.position, Vector3.zero);
@@ -681,7 +893,7 @@ public static class GameBootstrap
     }
 
     // ------------------------------------------------------------------ Helpers
-    private static Material Mat(Color c)
+    internal static Material Mat(Color c)
     {
         if (baseMat == null)
         {
@@ -694,7 +906,7 @@ public static class GameBootstrap
         return m;
     }
 
-    private static Material Unlit(Color c)
+    internal static Material Unlit(Color c)
     {
         Shader s = Shader.Find("Sprites/Default");
         if (s == null) return Mat(c);
@@ -703,14 +915,14 @@ public static class GameBootstrap
         return m;
     }
 
-    private static void SetLayerRecursive(GameObject go, int layer)
+    internal static void SetLayerRecursive(GameObject go, int layer)
     {
         go.layer = layer;
         foreach (Transform t in go.transform) SetLayerRecursive(t.gameObject, layer);
     }
 
     /// <summary>Sets a [SerializeField] private field by name (our scripts keep their fields private).</summary>
-    private static void Set(object target, string field, object value)
+    internal static void Set(object target, string field, object value)
     {
         FieldInfo f = target.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         if (f == null) { Debug.LogError("GameBootstrap: field '" + field + "' not found on " + target.GetType().Name); return; }
@@ -810,6 +1022,14 @@ public class PlayerHealth : MonoBehaviour
         hp = maxHealth;
     }
 
+    public void Upgrade(float extraMax)
+    {
+        if (extraMax <= 0f) return;
+        maxHealth += extraMax;
+        hp = maxHealth;
+        UpdateBar();
+    }
+
     public void Bind(Image flashImage, RectTransform fill, Text death)
     {
         flash = flashImage;
@@ -881,6 +1101,7 @@ public class EnemyAI : MonoBehaviour, IDamageable
     public float attackDamage = 10f;
     public float attackCooldown = 1.2f;
     public float maxHealth = 100f;
+    public int coinReward = 20;
 
     public float CurrentSpeed { get; private set; }
     public float AttackAnim { get; private set; }
@@ -929,6 +1150,7 @@ public class EnemyAI : MonoBehaviour, IDamageable
         deathStartRot = transform.rotation;
         CurrentSpeed = 0f;
         cc.enabled = false;
+        FBCoins.Add(coinReward);
     }
 
     private void Respawn()
