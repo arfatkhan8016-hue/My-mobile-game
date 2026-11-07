@@ -567,7 +567,8 @@ public static class GameBootstrap
             e.SetActive(false);
             e.transform.position = spots[i];
 
-            GameObject model = AttachModel(prefab, e.transform, h, "Enemies/" + n + "_Diffuse");
+            string texName = n.Replace(' ', '_').Replace('.', '_');   // FBX names on GitHub may have spaces/dots
+            GameObject model = AttachModel(prefab, e.transform, h, "Enemies/" + texName + "_Diffuse");
             if (model == null) { Object.Destroy(e); continue; }
 
             CharacterController cc = e.AddComponent<CharacterController>();
