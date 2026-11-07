@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -48,14 +49,19 @@ public static class GameBootstrap
             l.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
         }
 
+        bool hasCity = TryBuildCity();
+
         GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
-        ground.transform.localScale = new Vector3(20f, 1f, 20f);
-        ground.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.28f, 0.45f, 0.28f));
+        ground.transform.localScale = hasCity ? new Vector3(40f, 1f, 40f) : new Vector3(20f, 1f, 20f);
+        ground.GetComponent<Renderer>().sharedMaterial = Mat(hasCity ? new Color(0.24f, 0.25f, 0.27f) : new Color(0.28f, 0.45f, 0.28f));
 
-        MakeBlock(new Vector3(6f, 1.5f, 12f), new Vector3(8f, 3f, 1f), new Color(0.55f, 0.5f, 0.45f));
-        MakeBlock(new Vector3(-8f, 1f, 18f), new Vector3(1f, 2f, 10f), new Color(0.5f, 0.5f, 0.55f));
-        MakeBlock(new Vector3(0f, 0.5f, 25f), new Vector3(12f, 1f, 1f), new Color(0.6f, 0.45f, 0.4f));
+        if (!hasCity)   // fallback blocks when no city models were uploaded
+        {
+            MakeBlock(new Vector3(6f, 1.5f, 12f), new Vector3(8f, 3f, 1f), new Color(0.55f, 0.5f, 0.45f));
+            MakeBlock(new Vector3(-8f, 1f, 18f), new Vector3(1f, 2f, 10f), new Color(0.5f, 0.5f, 0.55f));
+            MakeBlock(new Vector3(0f, 0.5f, 25f), new Vector3(12f, 1f, 1f), new Color(0.6f, 0.45f, 0.4f));
+        }
 
         MakeTarget(new Vector3(0f, 1f, 14f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.3f, 0.2f));
         MakeTarget(new Vector3(-4f, 1f, 20f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.5f, 0.1f));
@@ -103,21 +109,25 @@ public static class GameBootstrap
         player.SetActive(false);
         player.transform.position = new Vector3(0f, 0.1f, 0f);
 
-        GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        body.name = "Body";
-        Object.DestroyImmediate(body.GetComponent<Collider>());
-        body.transform.SetParent(player.transform, false);
-        body.transform.localScale = Vector3.one * 0.9f;
-        body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
-        body.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.2f, 0.4f, 0.8f));
+        GameObject body = null;
+        if (!TryAttachCharacter(player))   // fallback: capsule if Ch45 model is not in Resources
+        {
+            body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            body.name = "Body";
+            Object.DestroyImmediate(body.GetComponent<Collider>());
+            body.transform.SetParent(player.transform, false);
+            body.transform.localScale = Vector3.one * 0.9f;
+            body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
+            body.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.2f, 0.4f, 0.8f));
 
-        GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Cube);   // shows facing direction
-        nose.name = "Nose";
-        Object.DestroyImmediate(nose.GetComponent<Collider>());
-        nose.transform.SetParent(body.transform, false);
-        nose.transform.localScale = new Vector3(0.4f, 0.25f, 0.4f);
-        nose.transform.localPosition = new Vector3(0f, 0.55f, 0.5f);
-        nose.GetComponent<Renderer>().sharedMaterial = Mat(Color.white);
+            GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Cube);   // shows facing direction
+            nose.name = "Nose";
+            Object.DestroyImmediate(nose.GetComponent<Collider>());
+            nose.transform.SetParent(body.transform, false);
+            nose.transform.localScale = new Vector3(0.4f, 0.25f, 0.4f);
+            nose.transform.localPosition = new Vector3(0f, 0.55f, 0.5f);
+            nose.GetComponent<Renderer>().sharedMaterial = Mat(Color.white);
+        }
 
         TPSCharacterController tps = player.AddComponent<TPSCharacterController>(); // adds CharacterController
         player.GetComponent<CharacterController>().radius = 0.3f;
@@ -127,9 +137,12 @@ public static class GameBootstrap
         Set(camRig, "character", tps);
         Set(camRig, "collisionMask", ignorePlayer);
 
-        CrouchVisual cv = player.AddComponent<CrouchVisual>();
-        cv.visual = body.transform;
-        cv.character = tps;
+        if (body != null)
+        {
+            CrouchVisual cv = player.AddComponent<CrouchVisual>();
+            cv.visual = body.transform;
+            cv.character = tps;
+        }
 
         // Gun + muzzle
         GameObject gun = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -140,6 +153,7 @@ public static class GameBootstrap
         gun.transform.localPosition = new Vector3(0.28f, 1.25f, 0.45f);
         gun.transform.localScale = new Vector3(0.08f, 0.14f, 0.55f);
         gun.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.15f, 0.15f, 0.17f));
+        AttachP90(gun);   // swaps the cube for the real P90 model if it is in Resources/Weapons
 
         Transform muzzle = new GameObject("Muzzle").transform;
         muzzle.SetParent(player.transform, false);
@@ -358,6 +372,190 @@ public static class GameBootstrap
         tex.SetPixels32(px);
         tex.Apply();
         return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
+    }
+
+    // ------------------------------------------------------------------ Models (Resources)
+    /// <summary>Builds a city grid from Resources/City/building-*.fbx (auto-fitted, box colliders).</summary>
+    private static bool TryBuildCity()
+    {
+        GameObject[] all = Resources.LoadAll<GameObject>("City");
+        List<GameObject> buildings = new List<GameObject>();
+        List<GameObject> props = new List<GameObject>();
+        foreach (GameObject g in all)
+        {
+            if (g.name.StartsWith("building")) buildings.Add(g);
+            else if (g.name.StartsWith("shipping") || g.name.StartsWith("detail-tank") || g.name.StartsWith("water-tower")) props.Add(g);
+        }
+        if (buildings.Count == 0) return false;
+
+        Transform root = new GameObject("City").transform;
+        System.Random rng = new System.Random(7);
+        const float spacing = 26f;
+        const float footprint = 18f;
+
+        for (int i = -3; i <= 3; i++)
+        {
+            if (i == 0) continue;   // keep a wide avenue in the middle
+            for (int j = 1; j <= 5; j++)
+            {
+                GameObject prefab = buildings[rng.Next(buildings.Count)];
+                PlaceModel(prefab, new Vector3(i * spacing, 0f, j * spacing), rng.Next(4) * 90f, footprint, root);
+            }
+        }
+
+        if (props.Count > 0)
+        {
+            for (int k = 0; k < 8; k++)
+            {
+                GameObject prefab = props[rng.Next(props.Count)];
+                float x = (k % 2 == 0 ? -1f : 1f) * (11f + (float)rng.NextDouble() * 3f);
+                PlaceModel(prefab, new Vector3(x, 0f, 18f + k * 9f), rng.Next(4) * 90f, 5f, root);
+            }
+        }
+        return true;
+    }
+
+    private static void PlaceModel(GameObject prefab, Vector3 pos, float yRot, float footprint, Transform parent)
+    {
+        GameObject go = Object.Instantiate(prefab, Vector3.zero, Quaternion.identity);
+        Bounds b = GetBounds(go);
+        float size = Mathf.Max(b.size.x, b.size.z);
+        if (size > 0.001f) go.transform.localScale *= footprint / size;
+
+        b = GetBounds(go);
+        go.transform.position += pos - new Vector3(b.center.x, b.min.y, b.center.z);
+
+        Bounds fb = GetBounds(go);
+        BoxCollider box = go.AddComponent<BoxCollider>();
+        Vector3 ls = go.transform.lossyScale;
+        box.center = go.transform.InverseTransformPoint(fb.center);
+        box.size = new Vector3(fb.size.x / ls.x, fb.size.y / ls.y, fb.size.z / ls.z);
+
+        go.transform.RotateAround(pos, Vector3.up, yRot);
+        go.transform.SetParent(parent, true);
+    }
+
+    /// <summary>Puts the Mixamo Ch45 model (Resources/Characters/Ch45_nonPBR) on the player, 1.8 m tall, facing +Z.</summary>
+    private static bool TryAttachCharacter(GameObject player)
+    {
+        GameObject prefab = Resources.Load<GameObject>("Characters/Ch45_nonPBR");
+        if (prefab == null) return false;
+
+        GameObject m = Object.Instantiate(prefab, new Vector3(1000f, 0f, 1000f), Quaternion.identity);
+        foreach (Animator a in m.GetComponentsInChildren<Animator>()) Object.DestroyImmediate(a); // no controller yet
+
+        // Face +Z using the hand bones (right hand is on +X when facing +Z)
+        Transform lh = null, rh = null;
+        foreach (Transform t in m.GetComponentsInChildren<Transform>())
+        {
+            if (t.name.EndsWith("LeftHand")) lh = t;
+            else if (t.name.EndsWith("RightHand")) rh = t;
+        }
+        Quaternion faceFix = Quaternion.identity;
+        if (lh != null && rh != null)
+        {
+            Vector3 right = rh.position - lh.position;
+            right.y = 0f;
+            if (right.sqrMagnitude > 0.0001f)
+            {
+                Vector3 fwd = Vector3.Cross(right.normalized, Vector3.up);
+                faceFix = Quaternion.Euler(0f, Vector3.SignedAngle(fwd, Vector3.forward, Vector3.up), 0f);
+            }
+        }
+        m.transform.rotation = faceFix;
+
+        Bounds b = GetBounds(m);
+        if (b.size.y < 0.05f) { Object.Destroy(m); return false; }
+        float s = 1.8f / b.size.y;
+        float footOffset = b.min.y - m.transform.position.y;
+        Vector3 baseScale = m.transform.localScale;
+
+        m.name = "CharacterModel";
+        m.transform.SetParent(player.transform, false);
+        m.transform.localRotation = faceFix;
+        m.transform.localScale = baseScale * s;
+        m.transform.localPosition = new Vector3(0f, -footOffset * s, 0f);
+        return true;
+    }
+
+    /// <summary>Replaces the cube gun with Resources/Weapons/P90, auto-detecting which end is the barrel.</summary>
+    private static void AttachP90(GameObject gun)
+    {
+        GameObject prefab = Resources.Load<GameObject>("Weapons/P90");
+        if (prefab == null) return;
+
+        GameObject m = Object.Instantiate(prefab, new Vector3(1000f, 0f, 1000f), Quaternion.identity);
+        foreach (Animator a in m.GetComponentsInChildren<Animator>()) Object.DestroyImmediate(a);
+
+        // Collect vertices in the model's local space (needs Read/Write: see Assets/Editor/ModelImportSettings.cs)
+        List<Vector3> pts = new List<Vector3>();
+        foreach (MeshFilter mf in m.GetComponentsInChildren<MeshFilter>())
+        {
+            Mesh mesh = mf.sharedMesh;
+            if (mesh == null || !mesh.isReadable) continue;
+            Vector3[] vs = mesh.vertices;
+            Transform t = mf.transform;
+            for (int i = 0; i < vs.Length; i++) pts.Add(m.transform.InverseTransformPoint(t.TransformPoint(vs[i])));
+        }
+
+        Quaternion r = Quaternion.identity;
+        Vector3 center = Vector3.zero;
+        float length = 1f;
+
+        if (pts.Count > 0)
+        {
+            Vector3 mn = pts[0], mx = pts[0];
+            foreach (Vector3 p in pts) { mn = Vector3.Min(mn, p); mx = Vector3.Max(mx, p); }
+            Vector3 size = mx - mn;
+            center = (mn + mx) * 0.5f;
+
+            int axis = size.x >= size.z ? 0 : 2;   // gun lies horizontally: barrel is along X or Z
+            length = size[axis];
+            float cut = length * 0.15f;
+            Vector3 loMin = Vector3.one * 1e9f, loMax = Vector3.one * -1e9f, hiMin = loMin, hiMax = loMax;
+            foreach (Vector3 p in pts)
+            {
+                float a = p[axis] - mn[axis];
+                if (a < cut) { loMin = Vector3.Min(loMin, p); loMax = Vector3.Max(loMax, p); }
+                else if (a > length - cut) { hiMin = Vector3.Min(hiMin, p); hiMax = Vector3.Max(hiMax, p); }
+            }
+            int o1 = axis == 0 ? 1 : 0;
+            int o2 = axis == 0 ? 2 : 1;
+            float areaLo = (loMax[o1] - loMin[o1]) * (loMax[o2] - loMin[o2]);
+            float areaHi = (hiMax[o1] - hiMin[o1]) * (hiMax[o2] - hiMin[o2]);
+            float sign = areaHi < areaLo ? 1f : -1f;   // thin end = barrel
+            Vector3 barrelDir = axis == 0 ? new Vector3(sign, 0f, 0f) : new Vector3(0f, 0f, sign);
+            r = Quaternion.Inverse(Quaternion.LookRotation(barrelDir, Vector3.up));
+        }
+        else
+        {
+            Bounds b = GetBounds(m);
+            Vector3 lp = m.transform.InverseTransformPoint(b.center);
+            center = lp;
+            length = Mathf.Max(b.size.x, b.size.z) / Mathf.Max(0.0001f, m.transform.lossyScale.x);
+            if (b.size.x > b.size.z) r = Quaternion.Euler(0f, -90f, 0f);
+            Debug.LogWarning("GameBootstrap: P90 mesh is not readable, barrel direction is a guess.");
+        }
+
+        float s = 0.62f / Mathf.Max(0.0001f, length);   // P90 is about 0.6 m long
+        gun.transform.localScale = Vector3.one;
+        Object.Destroy(gun.GetComponent<MeshRenderer>());
+        Object.Destroy(gun.GetComponent<MeshFilter>());
+
+        m.name = "P90Model";
+        m.transform.SetParent(gun.transform, false);
+        m.transform.localRotation = r;
+        m.transform.localScale = Vector3.one * s;
+        m.transform.localPosition = -(r * (center * s));
+    }
+
+    private static Bounds GetBounds(GameObject go)
+    {
+        Renderer[] rs = go.GetComponentsInChildren<Renderer>();
+        if (rs.Length == 0) return new Bounds(go.transform.position, Vector3.zero);
+        Bounds b = rs[0].bounds;
+        for (int i = 1; i < rs.Length; i++) b.Encapsulate(rs[i].bounds);
+        return b;
     }
 
     // ------------------------------------------------------------------ Helpers
