@@ -14,7 +14,10 @@ using UnityEngine.UI;
 public static class GameBootstrap
 {
     private const int PlayerLayer = 8;
+    private const int EnemyLayer = 9;
     private static Material baseMat;
+    private static Transform playerTf;
+    private static GameObject[] enemyPrefabs;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Init()
@@ -27,9 +30,13 @@ public static class GameBootstrap
         Screen.autorotateToLandscapeLeft = true;
         Screen.autorotateToLandscapeRight = true;
 
+        enemyPrefabs = Resources.LoadAll<GameObject>("Enemies");
+
         BuildWorld();
-        WeaponSystem weapon = BuildPlayerAndWeapon();
-        BuildHud(weapon);
+        PlayerHealth health;
+        WeaponSystem weapon = BuildPlayerAndWeapon(out health);
+        BuildHud(weapon, health);
+        SpawnEnemies(playerTf, health);
     }
 
     // ------------------------------------------------------------------ World
@@ -63,11 +70,14 @@ public static class GameBootstrap
             MakeBlock(new Vector3(0f, 0.5f, 25f), new Vector3(12f, 1f, 1f), new Color(0.6f, 0.45f, 0.4f));
         }
 
-        MakeTarget(new Vector3(0f, 1f, 14f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.3f, 0.2f));
-        MakeTarget(new Vector3(-4f, 1f, 20f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.5f, 0.1f));
-        MakeTarget(new Vector3(4f, 0.75f, 22f), PrimitiveType.Cube, new Vector3(1.5f, 1.5f, 1.5f), new Color(0.8f, 0.2f, 0.5f));
-        MakeTarget(new Vector3(10f, 1f, 8f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.2f, 0.5f, 0.9f));
-        MakeTarget(new Vector3(-10f, 1f, 6f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.6f, 0.2f, 0.8f));
+        if (enemyPrefabs.Length == 0)   // dummy targets only if no enemy models were uploaded
+        {
+            MakeTarget(new Vector3(0f, 1f, 14f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.3f, 0.2f));
+            MakeTarget(new Vector3(-4f, 1f, 20f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.9f, 0.5f, 0.1f));
+            MakeTarget(new Vector3(4f, 0.75f, 22f), PrimitiveType.Cube, new Vector3(1.5f, 1.5f, 1.5f), new Color(0.8f, 0.2f, 0.5f));
+            MakeTarget(new Vector3(10f, 1f, 8f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.2f, 0.5f, 0.9f));
+            MakeTarget(new Vector3(-10f, 1f, 6f), PrimitiveType.Capsule, new Vector3(1f, 1f, 1f), new Color(0.6f, 0.2f, 0.8f));
+        }
     }
 
     private static void MakeBlock(Vector3 pos, Vector3 scale, Color c)
@@ -90,7 +100,7 @@ public static class GameBootstrap
     }
 
     // ------------------------------------------------------------------ Player, camera, weapon
-    private static WeaponSystem BuildPlayerAndWeapon()
+    private static WeaponSystem BuildPlayerAndWeapon(out PlayerHealth health)
     {
         LayerMask ignorePlayer = ~(1 << PlayerLayer);
 
@@ -108,9 +118,14 @@ public static class GameBootstrap
         GameObject player = new GameObject("Player");
         player.SetActive(false);
         player.transform.position = new Vector3(0f, 0.1f, 0f);
+        playerTf = player.transform;
 
         GameObject body = null;
-        if (!TryAttachCharacter(player))   // fallback: capsule if Ch45 model is not in Resources
+        GameObject model = null;
+        GameObject charPrefab = Resources.Load<GameObject>("Characters/Ch45_nonPBR");
+        if (charPrefab != null) model = AttachModel(charPrefab, player.transform, 1.8f, "Characters/Ch45_nonPBR_Diffuse");
+
+        if (model == null)   // fallback: capsule if the Ch45 model is not in Resources
         {
             body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             body.name = "Body";
@@ -144,20 +159,20 @@ public static class GameBootstrap
             cv.character = tps;
         }
 
-        // Gun + muzzle
+        // Gun + muzzle (close to the body so both hands can reach it)
         GameObject gun = GameObject.CreatePrimitive(PrimitiveType.Cube);
         gun.name = "P90";
         Object.DestroyImmediate(gun.GetComponent<Collider>());
         gun.SetActive(false);
         gun.transform.SetParent(player.transform, false);
-        gun.transform.localPosition = new Vector3(0.28f, 1.25f, 0.45f);
+        gun.transform.localPosition = new Vector3(0.1f, 1.22f, 0.32f);
         gun.transform.localScale = new Vector3(0.08f, 0.14f, 0.55f);
         gun.GetComponent<Renderer>().sharedMaterial = Mat(new Color(0.15f, 0.15f, 0.17f));
         AttachP90(gun);   // swaps the cube for the real P90 model if it is in Resources/Weapons
 
         Transform muzzle = new GameObject("Muzzle").transform;
         muzzle.SetParent(player.transform, false);
-        muzzle.localPosition = new Vector3(0.28f, 1.27f, 0.8f);
+        muzzle.localPosition = new Vector3(0.1f, 1.24f, 0.68f);
 
         ParticleSystem flash = MakeMuzzleFlash(muzzle);
         Bullet bulletPrefab = MakeBulletPrefab();
@@ -169,6 +184,16 @@ public static class GameBootstrap
         Set(weapon, "muzzleFlash", flash);
         Set(weapon, "bulletPrefab", bulletPrefab);
         Set(weapon, "hitMask", ignorePlayer);
+
+        // Procedural animation (walk / run / crouch, both hands on the gun)
+        if (model != null)
+        {
+            ProceduralCharacterAnimator anim = model.AddComponent<ProceduralCharacterAnimator>();
+            anim.Init(player.transform, () => tps.CurrentSpeed, () => tps.IsCrouching, null, gun.transform);
+        }
+
+        health = player.AddComponent<PlayerHealth>();
+        health.Init(tps, weapon);
 
         SetLayerRecursive(player, PlayerLayer);
 
@@ -225,7 +250,7 @@ public static class GameBootstrap
     }
 
     // ------------------------------------------------------------------ HUD
-    private static void BuildHud(WeaponSystem weapon)
+    private static void BuildHud(WeaponSystem weapon, PlayerHealth health)
     {
         // Event system
         GameObject es = new GameObject("EventSystem", typeof(EventSystem));
@@ -274,6 +299,29 @@ public static class GameBootstrap
 
         Set(input, "moveJoystick", joystick);
         Set(input, "lookPad", lookPad);
+
+        // Damage flash (full screen, behind the buttons, never blocks touches)
+        RectTransform flashRt = UIRect("DamageFlash", root, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+        Image flashImg = UIImage(flashRt, null, new Color(1f, 0f, 0f, 0f), false);
+
+        // Health bar (top-left)
+        RectTransform hbBg = UIRect("HealthBg", root, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(40f, -40f), new Vector2(520f, 34f));
+        UIImage(hbBg, null, new Color(0f, 0f, 0f, 0.5f), false);
+        RectTransform hbFill = UIRect("HealthFill", hbBg, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f), Vector2.zero, new Vector2(520f, 0f));
+        UIImage(hbFill, null, new Color(0.2f, 0.85f, 0.3f, 0.95f), false);
+
+        // Death text (hidden until the player dies)
+        RectTransform deathRt = UIRect("DeathText", root, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(900f, 200f));
+        Text deathText = deathRt.gameObject.AddComponent<Text>();
+        deathText.font = font;
+        deathText.fontSize = 120;
+        deathText.alignment = TextAnchor.MiddleCenter;
+        deathText.color = new Color(1f, 0.2f, 0.2f, 1f);
+        deathText.raycastTarget = false;
+        deathText.text = "YOU DIED";
+        deathText.enabled = false;
+
+        health.Bind(flashImg, hbFill, deathText);
 
         // Buttons (bottom-right)
         Button fire = MakeButton("Fire", root, new Vector2(-230f, 240f), 230f, new Color(0.9f, 0.2f, 0.2f, 0.75f), circle, font, "FIRE");
@@ -435,16 +483,15 @@ public static class GameBootstrap
         go.transform.SetParent(parent, true);
     }
 
-    /// <summary>Puts the Mixamo Ch45 model (Resources/Characters/Ch45_nonPBR) on the player, 1.8 m tall, facing +Z.</summary>
-    private static bool TryAttachCharacter(GameObject player)
+    /// <summary>
+    /// Instantiates a Mixamo model under 'parent': scaled to 'height' metres, feet on the parent origin,
+    /// turned to face +Z (detected from the hand bones) and textured from Resources (embedded FBX textures are unreliable).
+    /// </summary>
+    private static GameObject AttachModel(GameObject prefab, Transform parent, float height, string texturePath)
     {
-        GameObject prefab = Resources.Load<GameObject>("Characters/Ch45_nonPBR");
-        if (prefab == null) return false;
-
         GameObject m = Object.Instantiate(prefab, new Vector3(1000f, 0f, 1000f), Quaternion.identity);
-        foreach (Animator a in m.GetComponentsInChildren<Animator>()) Object.DestroyImmediate(a); // no controller yet
+        foreach (Animator a in m.GetComponentsInChildren<Animator>()) Object.DestroyImmediate(a); // we animate by code
 
-        // Face +Z using the hand bones (right hand is on +X when facing +Z)
         Transform lh = null, rh = null;
         foreach (Transform t in m.GetComponentsInChildren<Transform>())
         {
@@ -465,17 +512,82 @@ public static class GameBootstrap
         m.transform.rotation = faceFix;
 
         Bounds b = GetBounds(m);
-        if (b.size.y < 0.05f) { Object.Destroy(m); return false; }
-        float s = 1.8f / b.size.y;
+        if (b.size.y < 0.05f) { Object.Destroy(m); return null; }
+        float s = height / b.size.y;
         float footOffset = b.min.y - m.transform.position.y;
         Vector3 baseScale = m.transform.localScale;
 
         m.name = "CharacterModel";
-        m.transform.SetParent(player.transform, false);
+        m.transform.SetParent(parent, false);
         m.transform.localRotation = faceFix;
         m.transform.localScale = baseScale * s;
         m.transform.localPosition = new Vector3(0f, -footOffset * s, 0f);
-        return true;
+
+        ApplyTexture(m, texturePath);
+        return m;
+    }
+
+    private static void ApplyTexture(GameObject go, string path)
+    {
+        Texture2D tex = Resources.Load<Texture2D>(path);
+        if (tex == null) return;
+        foreach (Renderer r in go.GetComponentsInChildren<Renderer>())
+        {
+            Material[] mats = r.materials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                mats[i].mainTexture = tex;
+                mats[i].color = Color.white;
+            }
+            r.materials = mats;
+        }
+    }
+
+    // ------------------------------------------------------------------ Enemies
+    private static void SpawnEnemies(Transform player, PlayerHealth health)
+    {
+        if (enemyPrefabs == null || enemyPrefabs.Length == 0 || player == null) return;
+
+        Vector3[] spots =
+        {
+            new Vector3(6f, 0.1f, 40f), new Vector3(-8f, 0.1f, 55f), new Vector3(10f, 0.1f, 75f),
+            new Vector3(-5f, 0.1f, 95f), new Vector3(12f, 0.1f, 115f), new Vector3(-12f, 0.1f, 70f)
+        };
+
+        for (int i = 0; i < spots.Length; i++)
+        {
+            GameObject prefab = enemyPrefabs[i % enemyPrefabs.Length];
+            string n = prefab.name;
+            bool warrok = n.StartsWith("Warrok");
+            bool mutant = n.StartsWith("Mutant");
+            float h = warrok ? 2.4f : (mutant ? 2.1f : 1.85f);
+            float speed = warrok ? 2.4f : (mutant ? 3.0f : 3.4f);
+
+            GameObject e = new GameObject("Enemy_" + n);
+            e.SetActive(false);
+            e.transform.position = spots[i];
+
+            GameObject model = AttachModel(prefab, e.transform, h, "Enemies/" + n + "_Diffuse");
+            if (model == null) { Object.Destroy(e); continue; }
+
+            CharacterController cc = e.AddComponent<CharacterController>();
+            cc.height = h;
+            cc.radius = Mathf.Clamp(h * 0.2f, 0.35f, 0.55f);
+            cc.center = new Vector3(0f, h * 0.5f, 0f);
+            cc.stepOffset = 0.3f;
+
+            EnemyAI ai = e.AddComponent<EnemyAI>();
+            ai.player = player;
+            ai.playerHealth = health;
+            ai.moveSpeed = speed;
+            ai.spawnPoint = spots[i];
+
+            ProceduralCharacterAnimator anim = model.AddComponent<ProceduralCharacterAnimator>();
+            anim.Init(e.transform, () => ai.CurrentSpeed, null, () => ai.AttackAnim, null);
+
+            SetLayerRecursive(e, EnemyLayer);
+            e.SetActive(true);
+        }
     }
 
     /// <summary>Replaces the cube gun with Resources/Weapons/P90, auto-detecting which end is the barrel.</summary>
@@ -547,6 +659,15 @@ public static class GameBootstrap
         m.transform.localRotation = r;
         m.transform.localScale = Vector3.one * s;
         m.transform.localPosition = -(r * (center * s));
+
+        // P90 textures are not part of the FBX, so use a plain dark metal look
+        Material dark = Mat(new Color(0.13f, 0.13f, 0.15f));
+        foreach (Renderer rend in m.GetComponentsInChildren<Renderer>())
+        {
+            Material[] arr = new Material[rend.sharedMaterials.Length];
+            for (int k = 0; k < arr.Length; k++) arr[k] = dark;
+            rend.sharedMaterials = arr;
+        }
     }
 
     private static Bounds GetBounds(GameObject go)
@@ -657,5 +778,427 @@ public class CrouchVisual : MonoBehaviour
         float s = Mathf.MoveTowards(visual.localScale.y, target, 2f * Time.deltaTime);
         visual.localScale = new Vector3(0.9f, s, 0.9f);
         visual.localPosition = new Vector3(0f, s, 0f);
+    }
+}
+
+
+/// <summary>Player health: damage flash, health bar, death + respawn after 3 seconds.</summary>
+public class PlayerHealth : MonoBehaviour
+{
+    public float maxHealth = 100f;
+    public bool IsDead { get; private set; }
+
+    private float hp;
+    private float respawnAt;
+    private float flashAlpha;
+    private Image flash;
+    private RectTransform barFill;
+    private float barFullWidth = 520f;
+    private Text deathText;
+    private TPSCharacterController tps;
+    private WeaponSystem weapon;
+    private CharacterController cc;
+    private Vector3 spawn;
+
+    public void Init(TPSCharacterController controller, WeaponSystem w)
+    {
+        tps = controller;
+        weapon = w;
+        cc = GetComponent<CharacterController>();
+        spawn = transform.position;
+        hp = maxHealth;
+    }
+
+    public void Bind(Image flashImage, RectTransform fill, Text death)
+    {
+        flash = flashImage;
+        barFill = fill;
+        deathText = death;
+        barFullWidth = fill.sizeDelta.x;
+        UpdateBar();
+    }
+
+    public void TakeDamage(float amount)
+    {
+        if (IsDead) return;
+        hp = Mathf.Max(0f, hp - amount);
+        flashAlpha = 0.45f;
+        UpdateBar();
+        if (hp <= 0f) Die();
+    }
+
+    private void Die()
+    {
+        IsDead = true;
+        respawnAt = Time.time + 3f;
+        weapon.StopFiring();
+        weapon.enabled = false;
+        tps.enabled = false;
+        if (deathText != null) deathText.enabled = true;
+    }
+
+    private void Respawn()
+    {
+        cc.enabled = false;
+        transform.position = spawn;
+        cc.enabled = true;
+        hp = maxHealth;
+        IsDead = false;
+        tps.enabled = true;
+        weapon.enabled = true;
+        if (deathText != null) deathText.enabled = false;
+        UpdateBar();
+    }
+
+    private void UpdateBar()
+    {
+        if (barFill != null) barFill.sizeDelta = new Vector2(barFullWidth * (hp / maxHealth), 0f);
+    }
+
+    private void Update()
+    {
+        if (flash != null && flashAlpha > 0f)
+        {
+            flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);
+            Color c = flash.color;
+            c.a = flashAlpha;
+            flash.color = c;
+        }
+        if (IsDead && Time.time >= respawnAt) Respawn();
+    }
+}
+
+/// <summary>Melee enemy: chases the player, hits when close, can be shot, falls over, respawns after 6 seconds.</summary>
+public class EnemyAI : MonoBehaviour, IDamageable
+{
+    public Transform player;
+    public PlayerHealth playerHealth;
+    public Vector3 spawnPoint;
+    public float moveSpeed = 3f;
+    public float detectRange = 45f;
+    public float attackRange = 1.9f;
+    public float attackDamage = 10f;
+    public float attackCooldown = 1.2f;
+    public float maxHealth = 100f;
+
+    public float CurrentSpeed { get; private set; }
+    public float AttackAnim { get; private set; }
+
+    private static readonly float[] SteerAngles = { 0f, 40f, -40f, 80f, -80f, 120f, -120f };
+
+    private CharacterController cc;
+    private readonly List<Material> mats = new List<Material>();
+    private float hp;
+    private float vy;
+    private float nextAttack;
+    private float aggroUntil;
+    private float flashUntil;
+    private bool dead;
+    private float diedAt;
+    private float respawnAt;
+    private Quaternion deathStartRot;
+
+    private void Awake()
+    {
+        cc = GetComponent<CharacterController>();
+        hp = maxHealth;
+    }
+
+    private void Start()
+    {
+        foreach (Renderer r in GetComponentsInChildren<Renderer>())
+            foreach (Material m in r.materials) mats.Add(m);
+    }
+
+    public void TakeDamage(float amount, Vector3 hitPoint, Vector3 hitNormal)
+    {
+        if (dead) return;
+        hp -= amount;
+        aggroUntil = Time.time + 10f;
+        Tint(Color.red);
+        flashUntil = Time.time + 0.08f;
+        if (hp <= 0f) Die();
+    }
+
+    private void Die()
+    {
+        dead = true;
+        diedAt = Time.time;
+        respawnAt = Time.time + 6f;
+        deathStartRot = transform.rotation;
+        CurrentSpeed = 0f;
+        cc.enabled = false;
+    }
+
+    private void Respawn()
+    {
+        transform.SetPositionAndRotation(spawnPoint, Quaternion.identity);
+        cc.enabled = true;
+        hp = maxHealth;
+        dead = false;
+        vy = 0f;
+        Tint(Color.white);
+    }
+
+    private void Tint(Color c)
+    {
+        for (int i = 0; i < mats.Count; i++) mats[i].color = c;
+    }
+
+    private void Update()
+    {
+        float dt = Time.deltaTime;
+
+        if (dead)
+        {
+            float t = Mathf.Clamp01((Time.time - diedAt) / 0.6f);
+            transform.rotation = Quaternion.Slerp(deathStartRot, deathStartRot * Quaternion.Euler(90f, 0f, 0f), t);
+            if (Time.time >= respawnAt) Respawn();
+            return;
+        }
+        if (player == null) return;
+
+        bool playerDead = playerHealth != null && playerHealth.IsDead;
+        Vector3 to = player.position - transform.position;
+        to.y = 0f;
+        float dist = to.magnitude;
+        bool aggro = !playerDead && (dist < detectRange || Time.time < aggroUntil);
+
+        Vector3 move = Vector3.zero;
+        float targetSpeed = 0f;
+
+        if (aggro && dist > attackRange)
+        {
+            Vector3 dir = Steer(to / Mathf.Max(dist, 0.001f));
+            move = dir * moveSpeed;
+            targetSpeed = moveSpeed;
+            Face(dir, dt);
+        }
+        else if (aggro)
+        {
+            Face(to.normalized, dt);
+            if (Time.time >= nextAttack)
+            {
+                nextAttack = Time.time + attackCooldown;
+                AttackAnim = 1f;
+                if (playerHealth != null) playerHealth.TakeDamage(attackDamage);
+            }
+        }
+
+        CurrentSpeed = Mathf.MoveTowards(CurrentSpeed, targetSpeed, 12f * dt);
+        AttackAnim = Mathf.MoveTowards(AttackAnim, 0f, 2.5f * dt);
+
+        if (cc.isGrounded && vy < 0f) vy = -2f;
+        vy += -25f * dt;
+        cc.Move((move + Vector3.up * vy) * dt);
+
+        if (flashUntil > 0f && Time.time >= flashUntil)
+        {
+            Tint(Color.white);
+            flashUntil = 0f;
+        }
+    }
+
+    private void Face(Vector3 dir, float dt)
+    {
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 0.0001f) return;
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.LookRotation(dir), 360f * dt);
+    }
+
+    /// <summary>Simple wall avoidance: try the direct way first, then widening angles.</summary>
+    private Vector3 Steer(Vector3 dir)
+    {
+        Vector3 origin = transform.position + Vector3.up * 0.9f;
+        int mask = ~((1 << 8) | (1 << 9));   // ignore player + enemy layers
+        for (int i = 0; i < SteerAngles.Length; i++)
+        {
+            Vector3 d = Quaternion.Euler(0f, SteerAngles[i], 0f) * dir;
+            if (!Physics.SphereCast(origin, 0.35f, d, out RaycastHit hit, 2.5f, mask, QueryTriggerInteraction.Ignore)) return d;
+        }
+        return dir;
+    }
+}
+
+/// <summary>
+/// Code-driven animation for Mixamo skeletons (no Animator / clips needed):
+/// idle, walk, run, crouch, arms swinging, enemy attack swing, or both hands on a gun via 2-bone IK.
+/// </summary>
+public class ProceduralCharacterAnimator : MonoBehaviour
+{
+    private class Bone
+    {
+        public Transform t;
+        public Quaternion restLocal;
+        public Vector3 restLocalPos;
+    }
+
+    private Bone hips, spine, lUp, lLeg, lFoot, rUp, rLeg, rFoot, lArm, lFore, lHand, rArm, rFore, rHand;
+    private Transform root, gun;
+    private System.Func<float> speedGet;
+    private System.Func<bool> crouchGet;
+    private System.Func<float> attackGet;
+    private Quaternion lFootRest, rFootRest;
+    private Vector3 lArmRestDir, rArmRestDir;
+    private float phase, crouchT, smoothSpeed;
+    private bool ready;
+    private readonly List<Bone> all = new List<Bone>();
+
+    public void Init(Transform rootTransform, System.Func<float> speed, System.Func<bool> crouching, System.Func<float> attack, Transform gunHold)
+    {
+        root = rootTransform;
+        speedGet = speed;
+        crouchGet = crouching;
+        attackGet = attack;
+        gun = gunHold;
+
+        Dictionary<string, Transform> map = new Dictionary<string, Transform>();
+        foreach (Transform t in GetComponentsInChildren<Transform>(true))
+        {
+            string n = t.name;
+            int i = n.LastIndexOf(':');
+            if (i >= 0) n = n.Substring(i + 1);
+            if (!map.ContainsKey(n)) map.Add(n, t);
+        }
+
+        hips = Make(map, "Hips");
+        spine = Make(map, "Spine");
+        lUp = Make(map, "LeftUpLeg");
+        lLeg = Make(map, "LeftLeg");
+        lFoot = Make(map, "LeftFoot");
+        rUp = Make(map, "RightUpLeg");
+        rLeg = Make(map, "RightLeg");
+        rFoot = Make(map, "RightFoot");
+        lArm = Make(map, "LeftArm");
+        lFore = Make(map, "LeftForeArm");
+        lHand = Make(map, "LeftHand");
+        rArm = Make(map, "RightArm");
+        rFore = Make(map, "RightForeArm");
+        rHand = Make(map, "RightHand");
+
+        ready = hips != null && spine != null && lUp != null && lLeg != null && lFoot != null && rUp != null && rLeg != null
+                && rFoot != null && lArm != null && lFore != null && lHand != null && rArm != null && rFore != null && rHand != null;
+        if (!ready)
+        {
+            Debug.LogWarning("ProceduralCharacterAnimator: skeleton bones not found on " + name);
+            return;
+        }
+
+        lFootRest = Quaternion.Inverse(root.rotation) * lFoot.t.rotation;
+        rFootRest = Quaternion.Inverse(root.rotation) * rFoot.t.rotation;
+        lArmRestDir = root.InverseTransformDirection((lFore.t.position - lArm.t.position).normalized);
+        rArmRestDir = root.InverseTransformDirection((rFore.t.position - rArm.t.position).normalized);
+    }
+
+    private Bone Make(Dictionary<string, Transform> map, string key)
+    {
+        Transform t;
+        if (!map.TryGetValue(key, out t)) return null;
+        Bone b = new Bone { t = t, restLocal = t.localRotation, restLocalPos = t.localPosition };
+        all.Add(b);
+        return b;
+    }
+
+    private static void Rot(Bone b, float angleDeg, Vector3 axis)
+    {
+        b.t.rotation = Quaternion.AngleAxis(angleDeg, axis) * b.t.rotation;
+    }
+
+    private void LateUpdate()
+    {
+        if (!ready) return;
+        float dt = Time.deltaTime;
+
+        float speed = speedGet != null ? speedGet() : 0f;
+        bool crouching = crouchGet != null && crouchGet();
+        float attack = attackGet != null ? attackGet() : 0f;
+        smoothSpeed = Mathf.MoveTowards(smoothSpeed, speed, 12f * dt);
+        crouchT = Mathf.MoveTowards(crouchT, crouching ? 1f : 0f, 5f * dt);
+
+        // Back to the rest (T) pose, then build the pose on top of it
+        for (int i = 0; i < all.Count; i++) all[i].t.localRotation = all[i].restLocal;
+        hips.t.localPosition = hips.restLocalPos;
+
+        Vector3 right = root.right;
+
+        float freq = smoothSpeed / (1f + smoothSpeed * 0.25f);
+        phase += freq * dt;
+        float s = Mathf.Sin(phase * 6.2832f);
+        float c = Mathf.Cos(phase * 6.2832f);
+        float moveFactor = Mathf.Clamp01(smoothSpeed / 1.5f);
+        float amp = Mathf.Clamp(smoothSpeed * 18f, 0f, 55f) * (1f - 0.4f * crouchT);
+        float bendAmp = Mathf.Clamp(smoothSpeed * 20f, 0f, 90f);
+
+        // Body: crouch drop + forward lean (positive angle about "right" leans forward)
+        if (crouchT > 0.001f) hips.t.position += Vector3.down * (0.3f * crouchT);
+        Rot(spine, 8f * Mathf.Clamp01((smoothSpeed - 3f) / 2f) + 12f * crouchT, right);
+
+        // Legs: negative angle about "right" = swing forward, positive knee angle = heel back
+        float fL = s * amp;
+        float fR = -s * amp;
+        Rot(lUp, -(fL + 60f * crouchT), right);
+        Rot(lLeg, Mathf.Max(0f, c) * bendAmp * moveFactor + 95f * crouchT, right);
+        Rot(rUp, -(fR + 60f * crouchT), right);
+        Rot(rLeg, Mathf.Max(0f, -c) * bendAmp * moveFactor + 95f * crouchT, right);
+
+        lFoot.t.rotation = root.rotation * lFootRest;   // keep feet flat
+        rFoot.t.rotation = root.rotation * rFootRest;
+
+        // Arms
+        if (gun != null)
+        {
+            HoldGun(lArm, lFore, lHand);
+            HoldGun(rArm, rFore, rHand);
+        }
+        else
+        {
+            float swing = amp * 0.8f;
+            float bend = 15f + 25f * moveFactor + 10f * attack;
+            Hang(lArm, lFore, lArmRestDir, -s * swing + attack * 85f, bend);
+            Hang(rArm, rFore, rArmRestDir, s * swing + attack * 85f, bend);
+        }
+    }
+
+    private void Hang(Bone arm, Bone fore, Vector3 restDirLocal, float swingForwardDeg, float foreBendDeg)
+    {
+        Vector3 curDir = (fore.t.position - arm.t.position).normalized;
+        float side = restDirLocal.x >= 0f ? 1f : -1f;
+        Vector3 hangWorld = root.TransformDirection(new Vector3(side * 0.18f, -1f, 0.05f).normalized);
+        arm.t.rotation = Quaternion.FromToRotation(curDir, hangWorld) * arm.t.rotation;
+        arm.t.rotation = Quaternion.AngleAxis(-swingForwardDeg, root.right) * arm.t.rotation;
+        fore.t.rotation = Quaternion.AngleAxis(-foreBendDeg, root.right) * fore.t.rotation;
+    }
+
+    private void HoldGun(Bone arm, Bone fore, Bone hand)
+    {
+        float side = Mathf.Sign(Vector3.Dot(root.right, arm.t.position - hips.t.position));
+        Vector3 target = side > 0f
+            ? gun.TransformPoint(new Vector3(0f, -0.09f, -0.03f))   // right hand: grip
+            : gun.TransformPoint(new Vector3(0f, -0.05f, 0.2f));    // left hand: front hand guard
+        Vector3 pole = root.TransformDirection(new Vector3(side * 0.6f, -0.7f, -0.35f));
+        SolveIK(arm.t, fore.t, hand.t, target, pole);
+    }
+
+    private static void SolveIK(Transform upper, Transform mid, Transform end, Vector3 target, Vector3 pole)
+    {
+        Vector3 a = upper.position;
+        Vector3 b = mid.position;
+        Vector3 c = end.position;
+        float l1 = (b - a).magnitude;
+        float l2 = (c - b).magnitude;
+
+        Vector3 toTarget = target - a;
+        float dist = Mathf.Clamp(toTarget.magnitude, 0.05f, (l1 + l2) * 0.999f);
+        Vector3 dir = toTarget.normalized;
+
+        float d1 = (l1 * l1 - l2 * l2 + dist * dist) / (2f * dist);
+        float h = Mathf.Sqrt(Mathf.Max(0f, l1 * l1 - d1 * d1));
+        Vector3 side = Vector3.ProjectOnPlane(pole, dir);
+        side = side.sqrMagnitude > 0.0001f ? side.normalized : Vector3.up;
+        Vector3 elbow = a + dir * d1 + side * h;
+
+        upper.rotation = Quaternion.FromToRotation(b - a, elbow - a) * upper.rotation;
+        Vector3 mp = mid.position;
+        mid.rotation = Quaternion.FromToRotation(end.position - mp, target - mp) * mid.rotation;
     }
 }
