@@ -8,8 +8,8 @@ public static class AdsConfig
     public const bool UseTestAds = true;
 
     // ---- Your real ids from admob.google.com ----
-    public const string RealAndroidAppId = "";          // looks like ca-app-pub-1234567890123456~1234567890
-    public const string RealInterstitialUnitId = "";    // looks like ca-app-pub-1234567890123456/1234567890
+    public const string RealAndroidAppId = "ca-app-pub-4388507441365820~3338865698";
+    public const string RealInterstitialUnitId = "ca-app-pub-4388507441365820/9257231778";
 
     // ---- Google's official test ids ----
     public const string TestAndroidAppId = "ca-app-pub-3940256099942544~3347511713";
