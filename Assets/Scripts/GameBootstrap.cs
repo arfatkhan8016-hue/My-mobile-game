@@ -39,6 +39,7 @@ public static class GameBootstrap
         if (begun) return;
         if (Object.FindObjectOfType<TPSCharacterController>() != null) return;
         begun = true;
+        AdsManager.Create();
 
         Screen.orientation = ScreenOrientation.LandscapeLeft;
         Screen.autorotateToPortrait = false;
@@ -373,7 +374,10 @@ public static class GameBootstrap
 
         Button menu = Lobby.RectButton(root, "MENU", new Vector2(1f, 1f), new Vector2(-150f, -160f), new Vector2(220f, 80f), new Color(0.2f, 0.2f, 0.25f, 0.8f), 34, font);
         menu.onClick.AddListener(() =>
-            UnityEngine.SceneManagement.SceneManager.LoadScene(Mathf.Max(0, UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex)));
+        {
+            AdsManager.OnMenu();   // full-screen ad at a natural break (only if one is ready)
+            UnityEngine.SceneManagement.SceneManager.LoadScene(Mathf.Max(0, UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex));
+        });
 
         // Buttons (bottom-right)
         Button fire = MakeButton("Fire", root, new Vector2(-230f, 240f), 230f, new Color(0.9f, 0.2f, 0.2f, 0.75f), circle, font, "FIRE");
@@ -1050,6 +1054,7 @@ public class PlayerHealth : MonoBehaviour
 
     private void Die()
     {
+        AdsManager.OnDeath();
         IsDead = true;
         respawnAt = Time.time + 3f;
         weapon.StopFiring();
@@ -1063,6 +1068,7 @@ public class PlayerHealth : MonoBehaviour
         cc.enabled = false;
         transform.position = spawn;
         cc.enabled = true;
+        AdsManager.OnRespawn();
         hp = maxHealth;
         IsDead = false;
         tps.enabled = true;
