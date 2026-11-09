@@ -1,13 +1,11 @@
 using UnityEngine;
-#if ENABLE_ADMOB
 using GoogleMobileAds.Api;
-#endif
 
 /// <summary>
 /// Full-screen (interstitial) ads from Google AdMob, shown only at natural breaks:
 ///  - after every 2nd death (when the player respawns)
 ///  - when the player taps MENU to go back to the lobby
-/// Ads are OFF until the file Assets/csc.rsp exists with the line:  -define:ENABLE_ADMOB
+/// Needs the Google Mobile Ads plugin (Packages/manifest.json). No csc.rsp / define symbol is needed any more.
 /// While AdsConfig.ShowDebugStatus is true, a yellow status line at the bottom-left tells what the ads are doing.
 /// </summary>
 public class AdsManager : MonoBehaviour
@@ -43,7 +41,6 @@ public class AdsManager : MonoBehaviour
         GUI.Label(new Rect(12f, Screen.height * 0.92f, Screen.width - 24f, Screen.height * 0.08f), "ADS: " + status + "  |  deaths " + deaths, style);
     }
 
-#if ENABLE_ADMOB
     private InterstitialAd interstitial;
     private volatile bool sdkReady;       // set from plugin callbacks (background thread)
     private volatile bool adClosed;
@@ -154,16 +151,4 @@ public class AdsManager : MonoBehaviour
         Time.timeScale = 1f;
         AudioListener.pause = false;
     }
-#else
-    private void Awake()
-    {
-        Instance = this;
-        status = "OFF (ENABLE_ADMOB is not defined - is Assets/csc.rsp uploaded?)";
-    }
-
-    private void HandleDeath() { deaths++; }
-    private void HandleRespawn() { }
-    private bool TryShow() { return false; }
-    private void ForceShow() { }
-#endif
 }
