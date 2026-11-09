@@ -1,74 +1,74 @@
 using System;
 using System.Reflection;
 using UnityEditor;
+using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 using UnityEngine;
 
 /// <summary>
-/// Put in Assets/Editor/. Runs automatically in the cloud build:
-///  - Google Mobile Ads needs Android min API 24 and target API 35
-///  - writes the AdMob App ID (from AdsConfig.cs) into the plugin's settings, so no Unity menu is needed
+/// Put in Assets/Editor/. Runs at the START of every Android build, BEFORE the Google Mobile Ads plugin checks its settings:
+///  - writes the AdMob App ID (from AdsConfig.cs) into GoogleMobileAdsSettings.asset
+///    (without it the app crashes the moment it opens)
+///  - sets Android min API 24 / target API 35 (needed by the plugin)
 /// Does nothing about the App ID if the plugin is not installed.
 /// </summary>
-[InitializeOnLoad]
-public static class AdMobBuildSetup
+public class AdMobBuildSetup : IPreprocessBuildWithReport
 {
-    static AdMobBuildSetup()
-    {
-        try { Apply(); }
-        catch (Exception) { EditorApplication.delayCall += SafeApply; }
-    }
+    // Lower than the plugin's own pre-processor, so we run first.
+    public int callbackOrder { get { return -10000; } }
 
-    private static void SafeApply()
+    public void OnPreprocessBuild(BuildReport report)
     {
-        try { Apply(); }
-        catch (Exception e) { Debug.LogWarning("AdMobBuildSetup: " + e.Message); }
-    }
+        if (report.summary.platform != BuildTarget.Android) return;
 
-    private static void Apply()
-    {
         try { PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)24; }
         catch (Exception e) { Debug.LogWarning("AdMobBuildSetup: min SDK: " + e.Message); }
         try { PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)35; }
         catch (Exception e) { Debug.LogWarning("AdMobBuildSetup: target SDK: " + e.Message); }
 
         Type t = FindType("GoogleMobileAds.Editor.GoogleMobileAdsSettings");
-        if (t == null) return;   // plugin not installed (yet)
-
-        const BindingFlags all = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-        object settings = null;
-        MethodInfo load = t.GetMethod("LoadInstance", all);
-        if (load != null) settings = load.Invoke(null, null);
-        if (settings == null)
+        if (t == null)
         {
-            PropertyInfo p = t.GetProperty("Instance", all);
-            if (p != null) settings = p.GetValue(null, null);
+            Debug.Log("AdMobBuildSetup: Google Mobile Ads plugin not found, skipping App ID.");
+            return;
         }
-        if (settings == null) { Debug.LogWarning("AdMobBuildSetup: could not load GoogleMobileAdsSettings"); return; }
 
-        bool changed = false;
-        foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        const BindingFlags statics = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        const BindingFlags members = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+        object settings = null;
+        MethodInfo load = t.GetMethod("LoadInstance", statics);
+        if (load != null) settings = load.Invoke(null, null);
+        if (settings == null) throw new BuildFailedException("AdMobBuildSetup: could not load GoogleMobileAdsSettings.");
+
+        string id = AdsConfig.AndroidAppId;
+        bool done = false;
+
+        PropertyInfo prop = t.GetProperty("GoogleMobileAdsAndroidAppId", members);
+        if (prop != null && prop.CanWrite)
         {
-            string n = f.Name.ToLowerInvariant();
-            if (f.FieldType == typeof(string) && n.Contains("android") && n.Contains("appid"))
+            prop.SetValue(settings, id, null);
+            done = true;
+        }
+        else
+        {
+            foreach (FieldInfo f in t.GetFields(members))
             {
-                if ((string)f.GetValue(settings) != AdsConfig.AndroidAppId)
+                string n = f.Name.ToLowerInvariant();
+                if (f.FieldType == typeof(string) && n.Contains("android") && n.Contains("appid"))
                 {
-                    f.SetValue(settings, AdsConfig.AndroidAppId);
-                    changed = true;
+                    f.SetValue(settings, id);
+                    done = true;
+                    break;
                 }
             }
-            else if (f.FieldType == typeof(bool) && n.Contains("admob") && n.Contains("enabled"))
-            {
-                if (!(bool)f.GetValue(settings)) { f.SetValue(settings, true); changed = true; }
-            }
         }
 
-        if (changed)
-        {
-            EditorUtility.SetDirty((UnityEngine.Object)settings);
-            AssetDatabase.SaveAssets();
-            Debug.Log("AdMobBuildSetup: AdMob App ID written to the plugin settings.");
-        }
+        if (!done) throw new BuildFailedException("AdMobBuildSetup: could not find the Android App ID setting in the plugin.");
+
+        EditorUtility.SetDirty((UnityEngine.Object)settings);
+        AssetDatabase.SaveAssets();
+        Debug.Log("AdMobBuildSetup: Android App ID = " + id);
     }
 
     private static Type FindType(string fullName)
