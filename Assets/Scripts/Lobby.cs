@@ -242,6 +242,12 @@ public static class Lobby
         Button shop = RectButton(root, "SHOP", new Vector2(0.5f, 0.5f), new Vector2(560f, -150f), new Vector2(640f, 130f), new Color(0.2f, 0.45f, 0.85f, 0.95f), 60, font);
         shop.onClick.AddListener(() => { shopPanel.SetActive(true); RefreshShop(); });
 
+        if (AdsConfig.ShowDebugStatus)
+        {
+            Button testAd = RectButton(root, "TEST AD", new Vector2(0f, 0f), new Vector2(200f, 150f), new Vector2(300f, 90f), new Color(0.5f, 0.3f, 0.7f, 0.9f), 34, font);
+            testAd.onClick.AddListener(AdsManager.DebugShowNow);
+        }
+
         Text tip = MakeText("Tip", root, "Defeat enemies to earn " + FBCoins.CurrencyName, 40, TextAnchor.MiddleCenter, new Color(1f, 1f, 1f, 0.85f), font);
         Place(tip.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 40f), new Vector2(1400f, 70f));
 
