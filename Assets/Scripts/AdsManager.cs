@@ -8,7 +8,7 @@ using GoogleMobileAds.Api;
 ///  - after every 2nd death (when the player respawns)
 ///  - when the player taps MENU to go back to the lobby
 /// Ads are OFF until the file Assets/csc.rsp exists with the line:  -define:ENABLE_ADMOB
-/// (that keeps the project compiling even if the AdMob plugin is not installed yet).
+/// While AdsConfig.ShowDebugStatus is true, a yellow status line at the bottom-left tells what the ads are doing.
 /// </summary>
 public class AdsManager : MonoBehaviour
 {
@@ -25,6 +25,23 @@ public class AdsManager : MonoBehaviour
     public static void OnDeath() { if (Instance != null) Instance.HandleDeath(); }
     public static void OnRespawn() { if (Instance != null) Instance.HandleRespawn(); }
     public static void OnMenu() { if (Instance != null) Instance.TryShow(); }
+    public static void DebugShowNow() { if (Instance != null) Instance.ForceShow(); }
+
+    private volatile string status = "starting";
+    private int deaths;
+    private GUIStyle style;
+
+    private void OnGUI()
+    {
+        if (!AdsConfig.ShowDebugStatus) return;
+        if (style == null)
+        {
+            style = new GUIStyle(GUI.skin.label);
+            style.fontSize = Mathf.Max(14, Screen.height / 32);
+            style.normal.textColor = Color.yellow;
+        }
+        GUI.Label(new Rect(12f, Screen.height * 0.92f, Screen.width - 24f, Screen.height * 0.08f), "ADS: " + status + "  |  deaths " + deaths, style);
+    }
 
 #if ENABLE_ADMOB
     private InterstitialAd interstitial;
@@ -35,13 +52,13 @@ public class AdsManager : MonoBehaviour
     private bool adIsShowing;
     private float lastShown = -9999f;
     private float retryAt = -1f;
-    private int deaths;
     private bool adDueAtRespawn;
 
     private void Awake()
     {
         Instance = this;
-        MobileAds.Initialize(status => { sdkReady = true; });
+        status = "initializing SDK";
+        MobileAds.Initialize(initStatus => { sdkReady = true; status = "SDK ready, loading ad"; });
     }
 
     private void Update()
@@ -52,6 +69,7 @@ public class AdsManager : MonoBehaviour
         {
             adClosed = false;
             EndAdPause();
+            status = "ad closed, loading next";
             needLoad = true;
         }
         if (loadFailed)
@@ -75,18 +93,21 @@ public class AdsManager : MonoBehaviour
             interstitial.Destroy();
             interstitial = null;
         }
+        status = "loading ad...";
 
         InterstitialAd.Load(AdsConfig.InterstitialUnitId, new AdRequest(), (InterstitialAd ad, LoadAdError error) =>
         {
             if (error != null || ad == null)
             {
+                status = "LOAD FAILED: " + error + " (retry in 30s)";
                 Debug.LogWarning("AdsManager: interstitial failed to load: " + error);
                 loadFailed = true;
                 return;
             }
             interstitial = ad;
+            status = "ad READY";
             ad.OnAdFullScreenContentClosed += () => { adClosed = true; };
-            ad.OnAdFullScreenContentFailed += (AdError e) => { Debug.LogWarning("AdsManager: ad failed to show: " + e); adClosed = true; };
+            ad.OnAdFullScreenContentFailed += (AdError e) => { status = "SHOW FAILED: " + e; adClosed = true; };
         });
     }
 
@@ -106,13 +127,25 @@ public class AdsManager : MonoBehaviour
     {
         if (adIsShowing || interstitial == null || !interstitial.CanShowAd()) return false;
         if (Time.realtimeSinceStartup - lastShown < AdsConfig.MinSecondsBetweenAds) return false;
+        BeginShow();
+        return true;
+    }
 
+    private void ForceShow()
+    {
+        if (adIsShowing) return;
+        if (interstitial == null || !interstitial.CanShowAd()) { status = "TEST AD: not ready yet"; return; }
+        BeginShow();
+    }
+
+    private void BeginShow()
+    {
         lastShown = Time.realtimeSinceStartup;
         adIsShowing = true;
+        status = "showing ad";
         Time.timeScale = 0f;          // pause the game while the ad is on screen
         AudioListener.pause = true;
         interstitial.Show();
-        return true;
     }
 
     private void EndAdPause()
@@ -125,11 +158,12 @@ public class AdsManager : MonoBehaviour
     private void Awake()
     {
         Instance = this;
-        Debug.Log("AdsManager: ads are OFF. Add Assets/csc.rsp with the line -define:ENABLE_ADMOB to turn them on.");
+        status = "OFF (ENABLE_ADMOB is not defined - is Assets/csc.rsp uploaded?)";
     }
 
-    private void HandleDeath() { }
+    private void HandleDeath() { deaths++; }
     private void HandleRespawn() { }
     private bool TryShow() { return false; }
+    private void ForceShow() { }
 #endif
 }
