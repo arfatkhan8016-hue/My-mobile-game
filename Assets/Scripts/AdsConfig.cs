@@ -5,10 +5,10 @@
 /// </summary>
 public static class AdsConfig
 {
-    public const bool UseTestAds = true;
+    public const bool UseTestAds = false;
 
     // Shows a small yellow status line at the bottom-left + a TEST AD button in the lobby. Turn off for the release.
-    public const bool ShowDebugStatus = true;
+    public const bool ShowDebugStatus = false;
 
     // ---- Your real ids from admob.google.com ----
     public const string RealAndroidAppId = "ca-app-pub-4388507441365820~3338865698";
